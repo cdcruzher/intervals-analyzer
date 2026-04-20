@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analizador de intervalos</title>
+
+  <!-- Motores de Ecosistema -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Calibración Topológica -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Music&display=swap');
+    body {
+      background-color: #020617; /* slate-950 */
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  
+  <div id="root"></div>
+
+  <!-- Motor Topológico (Compilación en tiempo de ejecución) -->
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+
+    // --- ICONOS ---
+    const Globe = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="2" y1="12" x2="22" y2="12"></line>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+      </svg>
+    );
+
+    // --- I18N DICCIONARIO ---
+    const TRANSLATIONS = {
+      es: {
+        title: "Analizador de intervalos",
+        subtitle: "Motor bidireccional de proyecciones interválicas.",
+        createdBy: "Creado por",
+        chromaticDist: "Distancia Cromática:",
+        semitones: "Semitonos",
+        projMelodic: "Proyección Melódica (Secuencial)",
+        projHarmonic: "Proyección Armónica (Simultánea)",
+        refFrame: "Marco de Referencia (Clave)",
+        vectorProj: "Proyección Vectorial (Generador de Intervalos)",
+        selectInt: "-- Seleccionar Intervalo para Proyectar --",
+        asc: "ASCENDENTE",
+        desc: "DESCENDENTE",
+        nodeOrigin: "Nodo Origen",
+        nodeDest: "Nodo Destino (Libre)",
+        clefs: {
+          treble: "Sol (Treble)",
+          bass: "Fa (Bass)",
+          alto: "Do 3ª (Alto)",
+          tenor: "Do 4ª (Tenor)"
+        }
+      },
+      en: {
+        title: "Interval Analyzer",
+        subtitle: "Bidirectional interval projection engine.",
+        createdBy: "Created by",
+        chromaticDist: "Chromatic Distance:",
+        semitones: "Semitones",
+        projMelodic: "Melodic Projection (Sequential)",
+        projHarmonic: "Harmonic Projection (Simultaneous)",
+        refFrame: "Frame of Reference (Clef)",
+        vectorProj: "Vector Projection (Interval Generator)",
+        selectInt: "-- Select Interval to Project --",
+        asc: "ASCENDING",
+        desc: "DESCENDING",
+        nodeOrigin: "Origin Node",
+        nodeDest: "Destination Node (Free)",
+        clefs: {
+          treble: "G (Treble)",
+          bass: "F (Bass)",
+          alto: "C 3rd (Alto)",
+          tenor: "C 4th (Tenor)"
+        }
+      }
+    };
+
+    // --- LÓGICA DE TEORÍA MUSICAL ---
+    const PITCH_BASES = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    const DIATONIC_BASES = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
+    const ACCIDENTALS = { 'bb': -2, 'b': -1, 'natural': 0, '#': 1, 'x': 2 };
+
+    const STANDARD_INTERVALS = [
+      { labelEs: "Unísono Justo", labelEn: "Perfect Unison", d: 0, s: 0 },
+      { labelEs: "Segunda Menor", labelEn: "Minor Second", d: 1, s: 1 },
+      { labelEs: "Segunda Mayor", labelEn: "Major Second", d: 1, s: 2 },
+      { labelEs: "Segunda Aumentada", labelEn: "Augmented Second", d: 1, s: 3 },
+      { labelEs: "Tercera Menor", labelEn: "Minor Third", d: 2, s: 3 },
+      { labelEs: "Tercera Mayor", labelEn: "Major Third", d: 2, s: 4 },
+      { labelEs: "Tercera Disminuida", labelEn: "Diminished Third", d: 2, s: 2 },
+      { labelEs: "Cuarta Justa", labelEn: "Perfect Fourth", d: 3, s: 5 },
+      { labelEs: "Cuarta Aumentada", labelEn: "Augmented Fourth", d: 3, s: 6 },
+      { labelEs: "Quinta Disminuida", labelEn: "Diminished Fifth", d: 4, s: 6 },
+      { labelEs: "Quinta Justa", labelEn: "Perfect Fifth", d: 4, s: 7 },
+      { labelEs: "Quinta Aumentada", labelEn: "Augmented Fifth", d: 4, s: 8 },
+      { labelEs: "Sexta Menor", labelEn: "Minor Sixth", d: 5, s: 8 },
+      { labelEs: "Sexta Mayor", labelEn: "Major Sixth", d: 5, s: 9 },
+      { labelEs: "Sexta Aumentada", labelEn: "Augmented Sixth", d: 5, s: 10 },
+      { labelEs: "Séptima Disminuida", labelEn: "Diminished Seventh", d: 6, s: 9 },
+      { labelEs: "Séptima Menor", labelEn: "Minor Seventh", d: 6, s: 10 },
+      { labelEs: "Séptima Mayor", labelEn: "Major Seventh", d: 6, s: 11 },
+      { labelEs: "Octava Justa", labelEn: "Perfect Octave", d: 7, s: 12 },
+      { labelEs: "Novena Menor", labelEn: "Minor Ninth", d: 8, s: 13 },
+      { labelEs: "Novena Mayor", labelEn: "Major Ninth", d: 8, s: 14 },
+      { labelEs: "Novena Aumentada", labelEn: "Augmented Ninth", d: 8, s: 15 },
+      { labelEs: "Oncena Justa", labelEn: "Perfect Eleventh", d: 10, s: 17 },
+      { labelEs: "Oncena Aumentada", labelEn: "Augmented Eleventh", d: 10, s: 18 },
+      { labelEs: "Trecena Menor", labelEn: "Minor Thirteenth", d: 12, s: 20 },
+      { labelEs: "Trecena Mayor", labelEn: "Major Thirteenth", d: 12, s: 21 },
+    ];
+
+    const getPitch = (note) => PITCH_BASES[note.letter] + ACCIDENTALS[note.acc] + note.octave * 12;
+    const getDiatonic = (note) => DIATONIC_BASES[note.letter] + note.octave * 7;
+
+    // Motor Analítico
+    const calculateInterval = (n1, n2, lang) => {
+      let p1 = getPitch(n1);
+      let p2 = getPitch(n2);
+      let d1 = getDiatonic(n1);
+      let d2 = getDiatonic(n2);
+
+      const isDescending = p2 < p1;
+      if (isDescending) {
+        let tempP = p1; p1 = p2; p2 = tempP;
+        let tempD = d1; d1 = d2; d2 = tempD;
+      }
+
+      const diatonicDiff = d2 - d1; 
+      const semitoneDiff = p2 - p1;
+
+      const simpleDiatonicDiff = diatonicDiff % 7;
+      const octaves = Math.floor(diatonicDiff / 7);
+      const simpleSemitoneDiff = semitoneDiff - (octaves * 12);
+
+      const intervalNames = {
+        es: {
+          0: { 0: "Justo", 1: "Aumentado", '-1': "Disminuido" },
+          1: { 0: "Disminuida", 1: "Menor", 2: "Mayor", 3: "Aumentada" },
+          2: { 1: "Subdisminuida", 2: "Disminuida", 3: "Menor", 4: "Mayor", 5: "Aumentada" },
+          3: { 4: "Disminuida", 5: "Justa", 6: "Aumentada" },
+          4: { 6: "Disminuida", 7: "Justa", 8: "Aumentada" },
+          5: { 7: "Disminuida", 8: "Menor", 9: "Mayor", 10: "Aumentada" },
+          6: { 9: "Disminuida", 10: "Menor", 11: "Mayor", 12: "Aumentada" }
+        },
+        en: {
+          0: { 0: "Perfect", 1: "Augmented", '-1': "Diminished" },
+          1: { 0: "Diminished", 1: "Minor", 2: "Major", 3: "Augmented" },
+          2: { 1: "Subdiminished", 2: "Diminished", 3: "Minor", 4: "Major", 5: "Augmented" },
+          3: { 4: "Diminished", 5: "Perfect", 6: "Augmented" },
+          4: { 6: "Diminished", 7: "Perfect", 8: "Augmented" },
+          5: { 7: "Diminished", 8: "Minor", 9: "Major", 10: "Augmented" },
+          6: { 9: "Diminished", 10: "Minor", 11: "Major", 12: "Augmented" }
+        }
+      };
+
+      const numberNames = {
+        es: ["Unísono", "Segunda", "Tercera", "Cuarta", "Quinta", "Sexta", "Séptima"],
+        en: ["Unison", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh"]
+      };
+
+      let numName = "";
+      let qualityName = "";
+
+      const descLabel = isDescending ? (lang === 'es' ? 'Descendente' : 'Descending') : '';
+
+      if (diatonicDiff === 0 && semitoneDiff === 0 && !isDescending) {
+        return { name: lang === 'es' ? "Unísono Justo" : "Perfect Unison", semitones: 0 };
+      }
+
+      if (octaves === 0) {
+        numName = numberNames[lang][simpleDiatonicDiff];
+      } else if (octaves === 1 && simpleDiatonicDiff === 0) {
+        numName = lang === 'es' ? "Octava" : "Octave";
+        const octMap = {
+          es: { 11: "Disminuida", 12: "Justa", 13: "Aumentada" },
+          en: { 11: "Diminished", 12: "Perfect", 13: "Augmented" }
+        };
+        qualityName = octMap[lang][simpleSemitoneDiff + 12] || (lang === 'es' ? "Desconocida" : "Unknown");
+        return { 
+          name: `${numName} ${qualityName} ${descLabel}`.trim(), 
+          semitones: semitoneDiff 
+        };
+      } else {
+        const compLabel = lang === 'es' ? "Intervalo compuesto" : "Compound interval";
+        numName = `${compLabel} (${diatonicDiff + 1}ª)`;
+      }
+
+      if (intervalNames[lang][simpleDiatonicDiff] && intervalNames[lang][simpleDiatonicDiff][simpleSemitoneDiff] !== undefined) {
+        qualityName = intervalNames[lang][simpleDiatonicDiff][simpleSemitoneDiff];
+      } else {
+        const atypicalLabel = lang === 'es' ? "Atípica" : "Atypical";
+        qualityName = `${atypicalLabel} (${simpleSemitoneDiff} st)`;
+      }
+
+      return { 
+        name: `${numName} ${qualityName} ${descLabel}`.trim(), 
+        semitones: isDescending ? -semitoneDiff : semitoneDiff 
+      };
+    };
+
+    // Motor Generativo
+    const getNoteFromInterval = (note1, intervalInfo, isDescending) => {
+      const d1 = getDiatonic(note1);
+      const p1 = getPitch(note1);
+
+      const targetD = isDescending ? d1 - intervalInfo.d : d1 + intervalInfo.d;
+      const targetP = isDescending ? p1 - intervalInfo.s : p1 + intervalInfo.s;
+
+      const letterIndex = ((targetD % 7) + 7) % 7;
+      const oct = Math.floor(targetD / 7);
+
+      const letters = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+      const targetLetter = letters[letterIndex];
+
+      const naturalTargetPitch = PITCH_BASES[targetLetter] + oct * 12;
+      const accValue = targetP - naturalTargetPitch;
+
+      const valueToAcc = { '-2': 'bb', '-1': 'b', '0': 'natural', '1': '#', '2': 'x' };
+      
+      let targetAcc = valueToAcc[accValue];
+      if (accValue > 2) targetAcc = 'x'; 
+      if (accValue < -2) targetAcc = 'bb';
+
+      return { letter: targetLetter, acc: targetAcc, octave: oct };
+    };
+
+    // --- COMPONENTES UI ---
+    const NoteSelector = ({ label, note, setNote }) => (
+      <div className="flex flex-col gap-1 w-full">
+        <label className="text-xs font-mono text-slate-400 uppercase tracking-widest">{label}</label>
+        <div className="flex gap-2">
+          <select 
+            value={note.letter} 
+            onChange={e => setNote({...note, letter: e.target.value})}
+            className="bg-slate-800 text-slate-100 border border-slate-600 rounded p-2 flex-1 outline-none focus:border-indigo-500 font-mono"
+          >
+            {['C', 'D', 'E', 'F', 'G', 'A', 'B'].map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select 
+            value={note.acc} 
+            onChange={e => setNote({...note, acc: e.target.value})}
+            className="bg-slate-800 text-slate-100 border border-slate-600 rounded p-2 flex-1 outline-none focus:border-indigo-500 font-serif text-lg"
+          >
+            <option value="bb">𝄫</option>
+            <option value="b">♭</option>
+            <option value="natural">♮</option>
+            <option value="#">♯</option>
+            <option value="x">𝄪</option>
+          </select>
+          <select 
+            value={note.octave} 
+            onChange={e => setNote({...note, octave: parseInt(e.target.value)})}
+            className="bg-slate-800 text-slate-100 border border-slate-600 rounded p-2 flex-1 outline-none focus:border-indigo-500 font-mono"
+          >
+            {[2, 3, 4, 5, 6, 7].map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      </div>
+    );
+
+    const StaffViewer = ({ clef, n1, n2, mode = 'melodic' }) => {
+      const CLEF_OFFSETS = {
+        treble: { symbol: '𝄞', anchorY: 70, dy: -18, fontSize: 55, index: 6 },
+        alto:   { symbol: '𝄡', anchorY: 60, dy: 0, fontSize: 45, index: 0 },
+        tenor:  { symbol: '𝄡', anchorY: 50, dy: 0, fontSize: 45, index: -2 },
+        bass:   { symbol: '𝄢', anchorY: 50, dy: 6, fontSize: 50, index: -6 }
+      };
+      const STEP_VALUES = { 'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6 };
+
+      const getCoordinates = (note, xPos) => {
+        const clefOffset = CLEF_OFFSETS[clef].index;
+        const noteIndex = ((note.octave - 4) * 7 + STEP_VALUES[note.letter]);
+        const y = 60 - (noteIndex - clefOffset) * 5;
+        return { x: xPos, y, acc: note.acc };
+      };
+
+      // Cálculo base de coordenadas
+      let c1 = getCoordinates(n1, mode === 'harmonic' ? 175 : 120);
+      let c2 = getCoordinates(n2, mode === 'harmonic' ? 175 : 240);
+
+      // Motor Anti-Colisión (Solo en modo armónico para Unísonos y Segundas)
+      if (mode === 'harmonic' && Math.abs(c1.y - c2.y) <= 5) {
+        // Desplazamos la nota más aguda (menor valor en Y) hacia la derecha
+        if (c1.y < c2.y) {
+          c1.x += 16;
+        } else if (c2.y < c1.y) {
+          c2.x += 16;
+        } else {
+          // Unísono exacto
+          c2.x += 16;
+        }
+      }
+
+      const renderNote = ({ x, y, acc }, key) => {
+        const ledgerLines = [];
+        if (y < 40) {
+          for (let ly = 30; ly >= y; ly -= 10) {
+            ledgerLines.push(<line key={`l-${ly}`} x1={x-14} y1={ly} x2={x+14} y2={ly} stroke="currentColor" strokeWidth="1.5" />);
+          }
+        } else if (y > 80) {
+          for (let ly = 90; ly <= y; ly += 10) {
+            ledgerLines.push(<line key={`l-${ly}`} x1={x-14} y1={ly} x2={x+14} y2={ly} stroke="currentColor" strokeWidth="1.5" />);
+          }
+        }
+
+        const isStemUp = y > 60;
+        const stemYEnd = isStemUp ? y - 30 : y + 30;
+        const stemX = isStemUp ? x + 6 : x - 6;
+
+        const accXOffset = acc === 'bb' ? 28 : acc === 'x' ? 20 : 24;
+
+        return (
+          <g key={key} className="text-slate-100">
+            {ledgerLines}
+            {acc !== 'natural' && (
+              <text x={x - accXOffset} y={y} dy="-6" fontSize="20" fontFamily="'Noto Music', serif" fill="currentColor">
+                {acc === 'b' ? '♭' : acc === '#' ? '♯' : acc === 'bb' ? '𝄫' : acc === 'x' ? '𝄪' : ''}
+              </text>
+            )}
+            <ellipse cx={x} cy={y} rx="7" ry="5" fill="currentColor" transform={`rotate(-15 ${x} ${y})`} />
+            <line x1={stemX} y1={y} x2={stemX} y2={stemYEnd} stroke="currentColor" strokeWidth="1.5" />
+          </g>
+        );
+      };
+
+      const renderClef = () => {
+        const currentClef = CLEF_OFFSETS[clef];
+        return (
+          <text 
+            x="15" 
+            y={currentClef.anchorY} 
+            dy={currentClef.dy} 
+            fontSize={currentClef.fontSize} 
+            fontFamily="'Noto Music', serif" 
+            fill="currentColor"
+            alignmentBaseline="central"
+            dominantBaseline="central"
+          >
+            {currentClef.symbol}
+          </text>
+        );
+      };
+
+      return (
+        <div className="w-full overflow-x-auto bg-slate-900 border border-slate-700 rounded-lg p-4 flex justify-center shadow-inner relative">
+          <svg width="350" height="160" viewBox="0 0 350 160" className="text-slate-400">
+            {[40, 50, 60, 70, 80].map(y => (
+              <line key={y} x1="0" y1={y} x2="350" y2={y} stroke="currentColor" strokeWidth="1" />
+            ))}
+            <line x1="0" y1="40" x2="0" y2="80" stroke="currentColor" strokeWidth="2" />
+            <line x1="350" y1="40" x2="350" y2="80" stroke="currentColor" strokeWidth="2" />
+            <g className="text-slate-100">{renderClef()}</g>
+            {renderNote(c1, 'n1')}
+            {renderNote(c2, 'n2')}
+          </svg>
+        </div>
+      );
+    };
+
+    function App() {
+      const [lang, setLang] = useState('es');
+      const [clef, setClef] = useState('treble');
+      const [note1, setNote1] = useState({ letter: 'C', acc: 'natural', octave: 4 });
+      const [note2, setNote2] = useState({ letter: 'E', acc: 'natural', octave: 4 });
+      const [genDirection, setGenDirection] = useState('asc');
+
+      const t = (key) => TRANSLATIONS[lang][key] || key;
+
+      const intervalData = useMemo(() => calculateInterval(note1, note2, lang), [note1, note2, lang]);
+
+      const handleIntervalInjection = (e) => {
+        if(e.target.value === "") return;
+        const interval = STANDARD_INTERVALS[e.target.value];
+        const projectedNote = getNoteFromInterval(note1, interval, genDirection === 'desc');
+        setNote2(projectedNote);
+        e.target.value = ""; 
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-950 text-slate-200 p-6 font-sans flex items-center justify-center">
+          <div className="max-w-4xl w-full">
+            
+            {/* ENCABEZADO DE IDENTIDAD */}
+            <header className="border-b border-slate-800 pb-4 mb-6 flex flex-col md:flex-row md:items-start justify-between gap-4">
+              <div className="flex flex-col items-start">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="h-16 w-16 rounded-2xl overflow-hidden shadow-lg border border-slate-700 bg-slate-900 flex-shrink-0">
+                    <img src="logo.jpg" alt="Logo" className="h-full w-full object-cover" onError={(e) => e.target.src='https://ui-avatars.com/api/?name=Nexarion&background=4f46e5&color=fff&size=128'} />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-indigo-400">{t('title')}</h1>
+                    <p className="text-slate-400 mt-1 text-sm">{t('subtitle')}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mt-1 font-mono pl-1">{t('createdBy')} Carlos David <a href="https://cdcruzher.github.io/cdcruzher/" target="_blank" className="text-indigo-500 hover:text-indigo-400 font-bold transition-colors">@cdcruzher</a></p>
+              </div>
+
+              <button 
+                onClick={() => setLang(lang === 'en' ? 'es' : 'en')}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900/50 hover:bg-slate-800 text-xs font-bold text-slate-400 hover:text-white transition-colors flex-shrink-0 mt-2 md:mt-0"
+              >
+                <Globe size={14} />
+                <span>{lang === 'en' ? 'ES' : 'EN'}</span>
+              </button>
+            </header>
+
+            {/* MATRIZ PRINCIPAL */}
+            <div className="bg-slate-900 shadow-2xl rounded-xl border border-slate-800 overflow-hidden">
+              <div className="p-6 space-y-8">
+                
+                {/* MATRIZ DUAL DE VISUALIZACIÓN */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-mono text-indigo-400 uppercase tracking-widest text-center border-b border-slate-800 pb-2">{t('projMelodic')}</h3>
+                    <StaffViewer clef={clef} n1={note1} n2={note2} mode="melodic" />
+                  </div>
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-mono text-amber-400 uppercase tracking-widest text-center border-b border-slate-800 pb-2">{t('projHarmonic')}</h3>
+                    <StaffViewer clef={clef} n1={note1} n2={note2} mode="harmonic" />
+                  </div>
+                </div>
+
+                <div className="bg-indigo-950/30 border border-indigo-500/30 p-6 rounded-lg text-center relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500"></div>
+                  <h2 className="text-3xl font-bold text-slate-100 mb-2">{intervalData.name}</h2>
+                  <p className="text-indigo-300 font-mono text-sm">{t('chromaticDist')} {Math.abs(intervalData.semitones)} {t('semitones')}</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  <div className="col-span-1 md:col-span-2">
+                    <label className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-2 block">{t('refFrame')}</label>
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'treble', label: TRANSLATIONS[lang].clefs.treble },
+                        { id: 'bass', label: TRANSLATIONS[lang].clefs.bass },
+                        { id: 'alto', label: TRANSLATIONS[lang].clefs.alto },
+                        { id: 'tenor', label: TRANSLATIONS[lang].clefs.tenor }
+                      ].map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => setClef(c.id)}
+                          className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-all duration-200 ${
+                            clef === c.id 
+                            ? 'bg-indigo-600 text-white shadow-[0_0_10px_rgba(79,70,229,0.5)] border border-indigo-400' 
+                            : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700 hover:text-slate-200'
+                          }`}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="col-span-1 md:col-span-2 p-4 bg-indigo-900/10 rounded-lg border border-indigo-500/20">
+                    <label className="text-xs font-mono text-indigo-300 uppercase tracking-widest mb-3 block border-b border-indigo-500/20 pb-2">{t('vectorProj')}</label>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <select 
+                        className="bg-slate-800 text-slate-100 border border-slate-600 rounded p-2 flex-1 outline-none focus:border-indigo-500 font-mono text-sm"
+                        onChange={handleIntervalInjection}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>{t('selectInt')}</option>
+                        {STANDARD_INTERVALS.map((int, i) => (
+                          <option key={i} value={i}>{lang === 'es' ? int.labelEs : int.labelEn}</option>
+                        ))}
+                      </select>
+                      <div className="flex bg-slate-800 rounded border border-slate-600 overflow-hidden">
+                        <button 
+                          onClick={() => setGenDirection('asc')}
+                          className={`px-4 py-2 text-xs font-bold transition-colors ${genDirection === 'asc' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+                        >
+                          {t('asc')}
+                        </button>
+                        <button 
+                          onClick={() => setGenDirection('desc')}
+                          className={`px-4 py-2 text-xs font-bold transition-colors ${genDirection === 'desc' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-700'}`}
+                        >
+                          {t('desc')}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-slate-500"></div>
+                    <NoteSelector label={t('nodeOrigin')} note={note1} setNote={setNote1} />
+                  </div>
+                  
+                  <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
+                    <NoteSelector label={t('nodeDest')} note={note2} setNote={setNote2} />
+                  </div>
+
+                </div>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      );
+    }
+
+    // Inicialización del DOM
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
